@@ -21,12 +21,15 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#define LED_ON()   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET)
-#define LED_OFF()  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET)
+#define LED_ON()   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET)
+#define LED_OFF()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET)
 #include <stdio.h>
-#define ADC_BUFLEN 1
-uint32_t adcBuf[ADC_BUFLEN];   //For ADC samples.
+#define ADC_BUFLEN 3
+uint16_t adcBuf[ADC_BUFLEN];   //For ADC samples.
+#define NUMBER_ADC_CHANNEL 4
+#define NUMBER_ADC_CHANNEL_AVERAGE_PER_CHANNEL 64
 
+uint16_t ADC_DMA_BUFF[NUMBER_ADC_CHANNEL * NUMBER_ADC_CHANNEL_AVERAGE_PER_CHANNEL]={0};
 uint8_t ADC_FLAG;
 #define TRUE 1
 #define FALSE 0
@@ -64,15 +67,30 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint16_t ADC_DMA_AVERAGE(int channel)
+{
+	uint32_t adc_sum;
+	int i;
 
+	adc_sum = 0;
+	if(channel < NUMBER_ADC_CHANNEL )
+	{
+		for(i=0; i<NUMBER_ADC_CHANNEL_AVERAGE_PER_CHANNEL; i++)
+			adc_sum += ADC_DMA_BUFF[channel+i*NUMBER_ADC_CHANNEL];
+	}
+	else
+		return 1;
+
+	return adc_sum/8;
+}
 /* USER CODE END 0 */
 
 /**
@@ -108,8 +126,8 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
-  MX_TIM2_Init();
   MX_ADC1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   // Say something
   uart_buf_len = sprintf(msgbuf, "Starting device.\r\n");
@@ -117,7 +135,8 @@ int main(void)
   HAL_Delay(500);
   // Start timer
   HAL_TIM_Base_Start(&htim2);
-  HAL_ADC_Start_DMA(&hadc1, adcBuf, ADC_BUFLEN);
+//  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&adcBuf[0], ADC_BUFLEN);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&ADC_DMA_BUFF[0], NUMBER_ADC_CHANNEL * NUMBER_ADC_CHANNEL_AVERAGE_PER_CHANNEL);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -127,9 +146,12 @@ int main(void)
 	if (ADC_FLAG==TRUE){
 		ADC_FLAG=FALSE;
 		++i;
-		if(i>1000) i=0;
-		uart_buf_len = sprintf(msgbuf, "%d,%d\r\n", i, (int)adcBuf[0]);
+		if(i>2000) i=0;
+//		uart_buf_len = sprintf(msgbuf, "%d,%d,%d,%d\r\n", i, (int)adcBuf[0],(int)adcBuf[1],(int)adcBuf[2]);
+		uart_buf_len = sprintf(msgbuf, "%d,%d,%d,%d,%d\r\n", i, ADC_DMA_AVERAGE(0),ADC_DMA_AVERAGE(1),ADC_DMA_AVERAGE(2),ADC_DMA_AVERAGE(3));
+
 		HAL_UART_Transmit(&huart2, (uint8_t *)msgbuf, uart_buf_len, 100);
+
 	}
     /* USER CODE END WHILE */
 
@@ -213,9 +235,9 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 4;
   hadc1.Init.DMAContinuousRequests = ENABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -225,7 +247,34 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_28CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Rank = 4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -257,7 +306,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 100000-1;
+  htim2.Init.Period = 781-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
